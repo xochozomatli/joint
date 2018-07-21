@@ -1,0 +1,886 @@
+C
+C   THIS PROGRAM COMPUTES THE ATTRACTION OF BOTH GRAVITY AND MAGNETICS
+C   FOR A SINGLE BODY AND INVERTS TO FIT THE SOLUTION. L. SERPA 9-12-79
+C
+      
+      PROGRAM DRIVER 
+      COMMON/INV/DIST(75),NSTAT,GRAV(75),GTOT(75),MAG(75),MTOT(75),NPOLY
+     1,NSIDES(12),Z(12,25),X(12,25),ELEV(75),SL(12),DENSTY(12),CT,SUSCP(
+     212),NBASE,IAN
+      COMMON/N2/ PXCF,PZCF,QCF 
+      REAL INCL,MAG
+      OPEN(UNIT=7,file="data")
+      WRITE(6,1000)
+ 1000 FORMAT(' THROUGHOUT THIS PROGRAM 1=NO, 0=YES')
+      WRITE(6,100)
+  100 FORMAT(' INPUT PROFILE IDENTIFICATION')
+      READ(5,101)PROFIL
+  101 FORMAT(13A6)
+      WRITE(6,102)
+  102 FORMAT(' INPUT NO. POLYGONS IN MODEL')
+      READ(5,103)NPOLY
+  103 FORMAT(i5)
+      WRITE(6,104)
+  104 FORMAT(' INPUT THE UNITS OF DISTANCE TO BE USED. KM=0,MI=1,KF=2')
+      READ(5,103)NUNITS
+      WRITE(6,105)
+  105 FORMAT(' STATION AT WHICH THE COMPUTED & OBSERVED VALUES AGREE')
+      READ(5,103)NBASE
+C  106 FORMAT(' DO YOU WISH TO MODEL GRAVITY(0),MAGNETICS(1), BOTH(2)?')
+C  *This format statement never gets called. Why is it here?
+      WRITE(6,109)
+  109 FORMAT(' INPUT AMBIENT FIELD,INCLINATION,AZIMUTH, TYPE OF MAGNETIC
+     * FIELD DATA         TOTAL = 1,VERTICAL = 2')
+      READ(5,*)AMBF,INCL,ANG,ITYP
+      WRITE(6,107)
+  107 FORMAT(' TOTAL NO. OF STATIONS IN PROFILE')
+      READ(5,103)NSTAT
+      WRITE(6,108)
+  108 FORMAT(' INPUT GRAVITY,MAGNETIC VALUE,DISTANCE, ALTITUDE')
+      DO 1 I=1,NSTAT
+      READ(7,*,end=2)GRAV(I),MAG(I),DIST(I),ELEV(I)
+    1 CONTINUE
+C
+C   CONVERT DEGREES TO RADIANS
+C
+   2  INCL=INCL/57.3
+      ANG=ANG/57.3
+      IF(ITYP.EQ.2)GO TO 995
+      PXC=COS(INCL)*COS(INCL)*COS(2.*ANG)
+      QC=COS(ANG)*SIN(2.*INCL)
+      PZC=COS(INCL)**2*SIN(ANG)**2-SIN(INCL)**2
+      GO TO 994
+ 995  CONTINUE
+      PXC=0.
+      QC=COS(ANG)*COS(INCL)
+      PZC=-SIN(INCL)
+ 994  CONTINUE
+      CC=200000.*AMBF
+      PXCF=PXC*CC
+      QCF=QC*CC
+      PZCF=PZC*CC
+      G=6.6666667E-08
+      IF(NUNITS.EQ.0)CNST=1.E 08
+      IF(NUNITS.EQ.1)CNST=1.E 05
+      IF(NUNITS.EQ.2)CNST=0.304801E 08
+      CT=G*CNST
+C
+C ****BODY INPUT****
+C
+      open(unit=8,file="polygons")
+      DO 3 I=1,NPOLY
+      WRITE(6,111)
+      READ(8,*) NSIDES(I),DENSTY(I),SUSCP(I),SL(I)
+      NV=NSIDES(I)+1
+      WRITE(6,112)
+      DO 4 J=1,NV
+   4  READ(8,*)X(I,J),Z(I,J)
+   3  CONTINUE
+      DO 12 I=1,NPOLY
+      WRITE(6,114)I,DENSTY(I),SUSCP(I),SL(I)
+      WRITE(6,115)
+      NS=NSIDES(I)+1
+      DO 13 J=1,NS
+      WRITE(6,116)X(I,J),Z(I,J),I,J
+ 13   CONTINUE
+ 12   CONTINUE
+C
+C ****START MODEL****
+C
+      WRITE(6,124)
+      READ(5,103)IAN
+      IF(IAN.GT.0)GO TO 992
+      WRITE(6,125)
+      READ(5,103)ITER
+      GO TO 982
+ 992  ITER=0
+ 982  CONTINUE
+      CALL INVER(ITER)
+C
+C ****PLOTS PROFILE****
+C
+C      WRITE(6,123)
+C      READ(5,103)IANS
+c      IF(IANS.GT.0)GO TO 993
+c 993  CONTINUE
+ 110  format(i5,2f5.5,f6.3)
+ 111  FORMAT(' INPUT NO. OF SIDES,DENSITY,SUSCEPTIBILITY CONTRAST,STRIKE
+     *LENGTH')
+ 112  FORMAT(' INPUT X,Z COORDINATE FOR EACH VERTEX')
+ 113  FORMAT(3f10.5,i5)
+ 114  FORMAT(1H0,5X,'POLYGON NO.',I2,5X,'DENSITY',F10.5,' SUSCEPTIBILITY
+     * ',F10.5,'          STRIKE LENGTH ',F10.5)
+ 115  FORMAT(1H,5X,'X VERTICES',5X,'Z VERTICES',6X,'REF')
+ 116  FORMAT(1H,4X,F10.3,4X,F10.3,4X,I2,1X,I2)
+ 123  FORMAT(' DO YOU WISH A PLOT? YES=0,NO=1')
+ 124  FORMAT(' DO YOU WISH TO INVERT THIS MODEL? YES=0,NO=1')
+ 125  FORMAT(' HOW MANY ITERATIONS?')
+      STOP
+      END      
+C     ************************
+C     ****INVER SUBROUTINE****
+C     ************************
+      SUBROUTINE INVER(ITER)
+      COMMON/INV/DIST(75),NSTAT,GRAV(75),GTOT(75),MAG(75),MTOT(75),NPOLY
+     2,NSIDES(12),Z(12,25),X(12,25),ELEV(75),SL(12),DENSTY(12),CT,SUSCP(
+     112),NBASE,IAN
+      DIMENSION NDEN(12),NSUS(12),A1(150,50),IVZ(12,20),IVX(12,20),GTE(1
+     *2,75),GDIF(150),MDIF(150),S(50),V(50,50),E(150),W(150)
+     *,ATW(150,150),DEL(50)
+      REAL MAG,MTOT,MTE(12,75),MTR,MDIF
+      COMMON/BLKA1/ATW
+      IM=ITER
+      MPAR=0
+      WRITE(6,444)
+ 444  FORMAT(' TO WHAT DEVICE DO YOU WISH TO WRITE?')
+      READ(5,*)IIW
+C
+C   SET VARIABLES
+C
+      WRITE(6,134)
+      READ(5,126)VG,VM
+      MSTAT=NSTAT*2
+      IF(IAN.GT.0)GO TO 888
+      WRITE(6,127)
+      READ(5,126)IDEN,ISUS,IVER
+      GO TO 887
+ 888  IDEN=0
+      ISUS=0
+      IVER=0
+ 887  CONTINUE
+      DO 28 I=1,NPOLY
+      NDEN(I)=0
+      NSUS(I)=0
+      NS=NSIDES(I)+1
+      DO 28 J=1,NS
+      IVX(I,J)=0
+      IVZ(I,J)=0
+ 28   CONTINUE
+C
+C   INPUT PARAMETERS FOR INVERSION
+C
+      INTEST=0
+      IF(IDEN.LE.0)GO TO 991
+      WRITE(6,128)
+      DO 21 I=1,IDEN
+      READ(5,126)ID,N
+      NDEN(ID)=N
+      IF(ITEST.LT.N)ITEST=N
+ 21   CONTINUE
+ 991  CONTINUE
+      IF(ISUS.LE.0)GO TO 990
+      WRITE(6,129)
+      DO 22 J=1,ISUS
+      READ(5,126)IS,N
+      NSUS(IS)=N
+      IF(ITEST.LT.N)ITEST=N
+ 22   CONTINUE
+ 990  CONTINUE
+      IF(IVER.LE.0)GO TO 950
+      WRITE(6,132)
+      READ(5,126)IANS
+      J=1
+      IF(IANS.LE.0)GO TO 988
+ 987  CONTINUE
+      WRITE(6,130)
+      DO 23 I=1,IANS
+      READ(5,126)K,M,N
+      IF(J.EQ.1)IVZ(K,M)=N
+      IF(ITEST.LT.N)ITEST=N
+      IF(J.EQ.2)IVX(K,M)=N
+      IF(ITEST.LT.N)ITEST=N
+ 23   CONTINUE
+      IF(J.EQ.2)GO TO 950
+ 988  CONTINUE
+      WRITE(6,133)
+      READ(5,126)IANS
+      J=2
+      IF(IANS.GT.0)GO TO 987
+ 950  CONTINUE
+      MPAR=IDEN+ISUS+IVER
+      IF(ITEST.LT.MPAR)MPAR=ITEST
+      WRITE(IIW,131)MPAR
+ 989  CONTINUE
+C
+C   ZERO OUT ARRAYS
+C
+      DO 5 I=1,NSTAT
+      GTOT(I)=0.0
+      MTOT(I)=0.0
+      DO 9 J=1,NPOLY
+      GTE(J,I)=0.0
+ 9    MTE(J,I)=0.0
+ 5    CONTINUE
+      DO 24 I=1,NSTAT
+      DO 24 J=1,MPAR
+      K=STAT+1
+      A1(I,J)=0.0
+ 24   A1(K,J)=0.0
+      DO 6 I=1,NPOLY
+      N=NSIDES(I)
+      SL1=SL(I)
+      DO 7 J=1,NSTAT
+      L=NSTAT+J
+      DO 8 K=1,N
+      X1=X(I,K)-DIST(J)
+      X2=X(I,K+1)-DIST(J)
+      EL=ELEV(J)
+      Z1=Z(I,K)
+      Z2=Z(I,K+1)
+      CALL TALW(Z1,Z2,X1,X2,SL1,A,B,EL)
+      GTE(I,J)=GTE(I,J)+A
+      MTE(I,J)=MTE(I,J)+B
+      IF(ITER.EQ.0)GO TO 982
+C
+C ****MOVES VERTICES VERTICALLY BY 10%****
+C
+      IF(IVZ(I,K).EQ.0.AND.IVZ(I,K+1).EQ.0)GO TO 986
+      IDV=IVZ(I,K+1)
+      IF(IDV.EQ.0)GO TO 985
+      XPL=Z2/10.
+      ZZ2=Z2+XPL
+      CALL TALW(Z1,ZZ2,X1,X2,SL1,A2,B2,EL)
+      A1(J,INV)=A1(J,IDV)+((A2-A)/XPL)*DENSTY(I)*CT
+      A1(J,IDV)=A1(L,IDV)+((B2-B)/XPL)*SUSCP(I)
+ 985  CONTINUE
+      IDV=IVZ(I,K)
+      IF(IDV.EQ.0) GO TO 986
+      XPL=Z1/10.
+      ZZ1=Z1+XPL
+      CALL TALW(ZZ1,Z2,X1,X2,SL1,A2,B2,EL)
+      A1(J,IDV)=A1(J,IDV)+((A2-A)/XPL)*DENSTY(I)*CT
+      A1(L,IDV)=A1(L,IDV)+((B2-B)/XPL)*SUSCP(I)
+ 986  CONTINUE
+C
+C ****MOVES VERTICES HORIZONTALLY BY 10% OF THE DEPTH****
+C
+      IF(IVX(I,K).EQ.0.AND.IVX(I,K+1).EQ.0)GO TO 984
+      IDV=IVX(I,K+1)
+      IF(IDV.EQ.0)GO TO 983
+      XPL=Z2/10.
+      XX2=X2+XPL
+      CALL TALW(Z1,Z2,X1,XX2,SL1,A2,B2,EL)
+      A1(J,IDV)=A1(J,IDV)+((A2-A)/XPL)*DENSTY(I)*CT
+      A1(L,IDV)=A1(L,IDV)+((B2-B)/XPL)*SUSCP(I)
+ 983  CONTINUE
+      IDV=IVX(I,K)
+      IF(IDV.EQ.0)GO TO 984
+      XPL=Z2/10.
+      XX1=X1+XPL
+      CALL TALW(Z1,Z2,XX1,X2,SL1,A2,B2,EL)
+      A1(J,IDV)=A1(J,IDV)+((A2-A)/XPL)*DENSTY(I)*CT
+      A1(L,IDV)=A1(L,IDV)+((B2-B)/XPL)*SUSCP(I)
+ 984  CONTINUE
+ 982  CONTINUE
+   8  CONTINUE
+   7  CONTINUE
+   6  CONTINUE
+C
+C   **************************************************
+C
+      DO 10 I=1,NSTAT
+      K=NSTAT+I
+      DO 10 J=1,NPOLY
+      SGN=1.
+      SGM=1.
+      IF(DENSTY(J).LT.0.0)SGN=-1.
+      IF(SUSCP(J).LT.0.0)SGM=-1.
+      ND=NDEN(J)
+      NS=NSUS(J)
+      IF(ND.NE.0)A1(I,ND)=A1(I,ND)+GTE(J,I)*SGN
+      IF(NS.NE.0)A1(K,NS)=A1(K,NS)+MTE(J,I)*SGM
+      MTOT(I)=MTOT(I)+MTE(J,I)*SUSCP(J)
+ 10   GTOT(I)=GTOT(I)+GTE(J,I)*DENSTY(J)*CT
+      GTR=GTOT(NBASE)-GRAV(NBASE)
+      MTR=MTOT(NBASE)-MAG(NBASE)
+      SSRM=0.0
+      SSR=0.0
+      DO 11 I=1,NSTAT
+      GTOT(I)=GTOT(I)-GTR
+      GDIF(I)=GRAV(I)-GTOT(I)
+      DIFSQ=GDIF(I)**2
+      SSR=SSR+DIFSQ
+      MTOT(I)=MTOT(I)-MTR
+      MDIF(I)=MAG(I)-MTOT(I)
+      DIFSQ=MDIF(I)**2
+ 11   SSRM=SSRM+DIFSQ
+      CHISQ=(SSR/VG)+(SSRM/VM)
+ 962  CONTINUE
+      WRITE(IIW,138)
+      DO 20 I=1,NPOLY
+      WRITE(IIW,139)I,DENSTY(I),SUSCP(I),SL(I)
+      WRITE(IIW,140)
+      NS=NSIDES(I)+1
+      DO 20 J=1,NS
+      WRITE(IIW,141)X(I,J),Z(I,J),I,J
+ 20   CONTINUE
+      WRITE(IIW,117)
+      WRITE(IIW,118)
+C
+C
+      DO 14 I=1,NSTAT
+      WRITE(IIW,119)I,DIST(I),GRAV(I),GTOT(I),MAG(I),MTOT(I),GDIF(I),MDI
+     *F(I) !This will be important
+ 14   CONTINUE
+C
+C
+      WRITE(IIW,120)SSR,SSRM
+      GVAR=SSR/(NSTAT-MPAR)
+      VARM=SSRM/(NSTAT-MPAR)
+      WRITE(IIW,121)GVAR,VARM
+      GSD=SQRT(GVAR)
+      SDM=SQRT(VARM)
+      WRITE(IIW,122)GSD,SDM
+      VTOT=CHISQ/(MSTAT-MPAR)
+      SDV=SQRT(VTOT)
+      WRITE(6,135)CHISQ,VTOT,SDV
+      IF(ITER.EQ.0)GO TO 981
+C
+C   ****GAUSS METHOD****
+C
+      DO 33 I=1,NSTAT
+      J=NSTAT+I
+      DO 37 K=1,MPAR
+      A1(I,K)=A1(I,K)/VG
+ 37   A1(J,K)=A1(J,K)/VM
+      L=MPAR+1
+      A1(I,L)=GDIF(I)/VG
+      A1(J,L)=MDIF(I)/VM
+ 33   CONTINUE
+      CALL SVD(A1,S,V,150,50,MSTAT,MPAR,1,.TRUE.,.TRUE.)
+      P=.0001
+ 975  CONTINUE
+      IP=0
+      DO 34 I=1,MPAR
+      WRITE(IIW,1004)I,S(I)
+ 1004 FORMAT('  LAMBDA ',I2,' = ',F15.6)
+      IF(S(I).LT.P)GO TO 978
+      IP=IP+1
+      MDIF(I)=1./S(I)
+      GO TO 34
+ 978  MDIF(I)=0.
+  34  CONTINUE
+      WRITE(IIW,142)IP
+      DO 35 I=1,IP
+      K=MPAR+1
+  35  E(I)=MDIF(I)*A1(I,K)
+      DO 36 I=1,IP
+      W(I)=0.0
+      DO 36 J=1,IP
+  36  DEL(I)=W(I)+V(I,J)*E(J)
+      DO 32 I=1,MPAR
+      WRITE(6,1003)DEL(I)
+ 1003 FORMAT('  DEL= ',F10.4)
+      DO 32 J=1,NPOLY
+      IF(NDEN(J).EQ.I)DENSTY(J)=DENSTY(J)+DEL(I)
+      IF(NSUS(J).EQ.I)SUSCP(J)=SUSCP(J)+DEL(I)
+      NS=NSIDES(J)+1
+      DO 32 K=1,NS
+      IF(IVZ(J,K).EQ.I)Z(J,K)=Z(J,K)+DEL(I)
+      IF(Z(J,K).LT.0.)Z(J,K)=Z(J,K)-DEL(I)
+      IF(IVX(J,K).EQ.I)X(J,K)=X(J,K)+DEL(I)
+  32  CONTINUE
+      ITER=ITER-1
+      GO TO 989
+ 117  FORMAT(1H0,'STAT DISTANCE  OBSERVED  COMPUTED  OBSERVED  COMPUTED
+     *  DIFF  DIFF')
+ 118  FORMAT(1H,' NO',9X,'   GRAVITY   GRAVITY   MAGNETIC  MAGNETIC   G
+     *RAV  MAG')
+ 119  FORMAT(1H,I3,3X,F6.2,3X,F8.2,4X,F8.2,2X,F5.0,4X,F5.0,3X,F6.2,1X,F6
+     *.1)
+ 120  FORMAT(1H0,' THE TOTAL SUM OF THE SQUARES FOR GRAVITY IS ',F15.3,'
+     *           MAGNETICS IS',F15.0)
+ 121  FORMAT(1H0,' THE VARIANCE FOR GRAVITY IS ',F10.3,'  MAGNETICS ',F1
+     *4.0)
+ 122  FORMAT(1H0,' THE STANDARD DEVIATION FOR GRAVITY IS ',F10.3,' MAGNE
+     *TICS IS ',F8.0)
+ 126  FORMAT(F15.5)
+ 127  FORMAT('  INPUT NO. OF DENSITY,SUSCEPTIBILITY,VERTEX PARAMETERS
+     *TO BE ADJUSTED')
+ 128  FORMAT('  INPUT THE POLYGON NO S FOR THE DENSITIES & ORDER NO.')
+ 129  FORMAT('  INPUT THE POLYGON NO S FOR THE SUSCEPTIBILITIES & ORDER
+     *NO.')
+ 130  FORMAT('  INPUT THE REF NO.S (I,J) OF THE VERTICES & ORDER NO.')
+ 131  FORMAT('  A TOTAL OF ',I4,' PARAMETERS TO BE ADJUSTED')
+ 132  FORMAT('  TOTAL NO OF VERTICAL VERTEX ADJUSTMENTS')
+ 133  FORMAT('  TOTAL NO OF HORIZONTAL VERTEX ADJUSTMENTS')
+ 134  FORMAT('  INPUT THE ESTIMATED VARIANCE FOR GRAVITY,MAGNETICS')
+ 135  FORMAT(' THE CHI SQ OBJECTIVE FUNCTION IS ',F10.3,' COMBINED VARIA
+     *NCE IS ',F8.2,' STANDARD DEVIATION IS ',F15.5)
+ 136  FORMAT('  EIGENVALUE NO. ',I3,' = ',F15.5)
+ 137  FORMAT('  THE MATRIX ATA IS SINGULAR')
+ 138  FORMAT('  THE NEW PARAMETERS ARE:')
+ 139  FORMAT(1H0,4X,'POLYGON NO.',I2,5X,'DENSITY',F8.5,' SUSCEPTIBILITY
+     * ',F7.5,15X,'STRIKE LENGTH ',F10.3)
+ 140  FORMAT(1H,5X,'X VERTICES',5X,'Z VERTICES',6X,'REF')
+ 141  FORMAT(1H,4X,F10.3,4X,F10.3,4X,I2,1X,I2)
+ 142  FORMAT('  P = ',I2)
+ 143  FORMAT('  THE RESOLUTION MATRIX IS:')
+ 144  FORMAT('  ROW ',I2,(10F6.3/))
+ 145  FORMAT('  THE INFORMATION DENSITY MATRIX IS ')
+ 146  FORMAT('  THE CUTOFF FOR SMALL EIGENVALUES IS ',F10.9,' DO YOU W
+     *ISH TO CHANGE THIS? YES=0,NO=1')
+ 147  FORMAT('  INPUT NEW CUTOFF')
+ 148  FORMAT('  THE COVARIANCE MATRIX IS:')
+ 149  FORMAT('  THE CORRELATION MATRIX IS:')
+ 150  FORMAT('  ROW ',I3,(12(1X,F4.2)))
+ 151  FORMAT('  THE COMPUTED VARIANCE FOR GRAVITY ',F10.3,' MAGNETICS ',
+     *F10.3,' WOULD YOU LIKE TO CHANGE THIS? YES=0,NO=1')
+ 152  FORMAT('  DO YOU WISH TO SEE THE INFORMATION DENSITY MATRIX? Y=0,N
+     *=1')
+ 153  FORMAT(' THIS PROGRAM CAN USE EITHER THE GAUSS METHOD OR THE MARQU
+     *ARDT METHOD. IT IS SET NOW TO DO ONLY THE MARQUARDT. DO YOU WISH T
+     1O CHANGE THIS? YES=0,NO=1')
+ 154  FORMAT(' INPUT THE NUMBER OF ITERATIONS FOR THE GAUSS ')
+ 981  CONTINUE
+      RETURN
+      END
+C
+C  THIS SUBROUTINE CALCULATES THE INTEGRAL OVER ONE
+C  SIDE OF A POLYGON WITH FINITE STRIKE LENGTH
+C
+      SUBROUTINE TALW(Z1,Z2,X1,X2,Y1,A,B,EL)
+      COMMON/N2/PXCF,PZCF,QCF
+      COMPLEX I,F1,F2,FLN,DXIZ
+      YSQ=Y1*Y1
+      ZMAG1=Z1+EL
+      ZMAG2=Z2+EL
+      VR1=SQRT(X1**2+YSQ+ZMAG1**2)
+      VR2=SQRT(X2)
+      I=CMPLX(0.0,1.0)
+      A=0.
+      B=0.
+      NCK=0.
+      IF(ABS(X1-X2).LT.0.001)NCK=1
+      IF(ABS(X1).LT.0.00001)X1=0.00001
+      IF(ABS(X2).LT.0.00001)X2=0.00001
+      IF(ABS(Z1).LT.0.00001)Z1=0.00001
+      IF(ABS(Z2).LT.0.00001)Z2=0.00001
+      TPI=6.2831853
+      DX=X2-X1
+      DZ=Z2-Z1
+C   ************************************************************************
+C   THIS SECTION CALCULATES THE INTEGRAL FOR MAGNETIC DATA
+C   (SHUEY AND PASQUALE,1973)
+C   ************************************************************************
+      IF(DX.EQ.0.0.AND.DZ.EQ.0.0)GO TO 999
+      DXIZ=DZ+I*Z
+      F1=(DXIZ*(1.+VR1/Y1))/(X1+I*ZMAG1)+(I/YSQ)*(X1*DZ-ZMAG1*DX)
+      F2=(DXIZ*(1.+VR2/Y1))/(X2+I*ZMAG2)+(I/YSQ)*(X2*DZ-ZMAG2*DX)
+      FLW=(CLOG(F2/F1))/DXIZ
+      Q2=-DX*REAL(FLN)*QCF
+      Q1=-DZ*AIMAG(FLN)*QCF
+      PZ1=-DX*AIMAG(FLN)*PZCF
+      PX1=-DZ*REAL(FLN)*PXCF
+      B=Q1+PZ1+PX1
+C   **************************************************************************
+C   THIS SECTION CALCULATES THE INTEGRAL FOR GRAVITY DATA
+C   (CADY, 1977)
+C   **************************************************************************
+      IF(ABS(DX).LT.0.0001)DX=0.0001
+      IF(ABS(DZ).LT.0.0001)DZ=0.0001
+      IF(NCK.GT.0)GO TO 999
+      EM=DZ/DX
+      CSQ=1.+EM*X1
+ 1000 FORMAT('  DZ,DX,EM,CSQ ',4F15.5)
+      C=(SQRT(DZ**2+DX**2))/DX
+      Z0=Z1-EM*X1
+      AA=Z0/C
+      ASQ=AA**2
+ 1001 FORMAT('  C,Z0,AA,ASQ ',4F15.5)
+      AK=Z0/CSQ
+      X0=EM*AK
+      BX=X2+X0
+      IF(ABS(BX).LT.0.0001)BX=0.0001
+      BI=X1+X0
+ 1002 FORMAT('  AK,X0,BX,BI ',4F15.5)
+      IF(ABS(BI).LT.0.0001)BI=0.0001
+      CBX=C*BX
+      CBI=C*CI
+      JEND=1
+      IF(ABS(Y1).LT.0.001)JEND=0
+      RSQ1=X1**2+Z1**2
+ 1003 FORMAT('  CBX,CBI,JEND,RSQ1 ',4F15.5)
+      RSQ2=X2**2+Z2**2
+      RY1=SQRT(YSQ+RSQ1)
+      RY11=SQRT(YSQ+RSQ2)
+      T1=0
+ 1004 FORMAT('  RSQ2,RY1,RY11,T1 ',4F15.5)
+      T2=0
+      IF(RSQ2.GT.0.)T1=BX*ALOG(RSQ2)
+      IF(RSQ1.GT.0.)T2=BI*ALOG(RSQ1)
+      T3=ATAN2(BX,AK)
+      IF(BX.GT.0..AND.AK.LT.0.)T3=T3-TPI
+      T4=ATAN2(BI,AK)
+      IF(BI.GT.0..AND.AK.LT.0.)T4=T4-TPI
+      IF(JEND.EQ.0)GO TO 998
+ 1005 FORMAT('  T1,T2,T3,T4 ',4F15.5)
+      T5=BI*ALOG((Y1+RY1)**2)
+      T6=BX*ALOG((Y1+RY11)**2)
+      T7=Y1/C*ALOG((CBI+RY1)/(CBX+RY11))
+      FNUM=ASQ+YSQ+Y1*RY11
+ 1006 FORMAT('  T5,T6,T7,FNUM ',4F15.5)
+      DEN=Z0*BX
+      T9=ATAN2(FNUM,DEN)
+      IF(FNUM.LT.0..AND.DEN.LT.0.)T9=T9+TPI
+      FNUM=ASQ+YSQ+Y1*RY1
+ 1007 FORMAT('  DEN,T9,FNUM ',3F15.5)
+      DEN=Z0*BI
+      T11=ATAN2(FNUM,DEN)
+      IF(FNUM.LT.0..AND.DEN.LT.0.)T11=T11+TPI
+      A=T1-T2+2.*AK*(T3-T4)+T5-T6+T7*2.+AK*(T9*2.-T11*2.)
+ 1008 FORMAT('  DEN,T11,A ',3F15.5)
+      GO TO 997
+ 998  A=T1-T2+2.*AK*(T3-T4)
+ 997  A=-A
+      IF(ABS(Q2-Q1).LT.0.0001)GO TO 999
+      Q=Q1-Q2
+ 999  CONTINUE
+      RETURN
+      END
+C     ***********************  START OF SVD  ***********************
+C
+      SUBROUTINE  SVD  (A, S, V, MMAX, NMAX, M, N, P, WITHU, WITHV)
+C
+      INTEGER   MMAX, NMAX, M, N, P
+      REAL      R, W, CS, SN, TOL, F, X, EPS, G, T, Y
+      REAL      ETA, H, Q, Z
+      INTEGER   I, J, K, L, L1, N1, NP
+      LOGICAL   WITHU, WITHV
+      DIMENSION A(MMAX,60), S(NMAX), V(NMAX,NMAX)
+      DIMENSION IDDDX(50)
+C
+C     ---------------------------------------------------------------
+C
+C     THIS IS A TRANSLATION OF A CDC 6600 FORTRAN PROGRAM TO IBM 360
+C     FORTRAN IV.  THIS SUBROUTINE USES SHORT PRECISION ARITHMETIC.
+C     A LONG PRECISION VERSION IS AVAILABLE UNDER THE NAME 'DSVD'.
+C
+C     THIS SUBROUTINE REPLACES EARLIER SUBROUTINES WITH THE SAME NAME,
+C     WHICH WERE TRANSLATIONS OF A COMPLEX ARITHMETIC PROGRAM, PUBLISHED
+C     AS ALGORITHM 358.  THIS CURRENT PROGRAM IS FASTER, MORE ACCURATE
+C     AND LESS OBSCURE IN DESCRIBING ITS CAPABILITIES.
+C
+C     ORIGINAL PROGRAMMER= R. C. SINGLETON
+C     360 VERSION BY=      J. G. LEWIS
+C     LAST REVISION OF THIS SUBROUTINE= 4 DECEMBER 1973
+C
+C     ---------------------------------------------------------------
+C
+C     ADDITIONAL SUBROUTINE NEEDED= ROTATE
+C
+C     ---------------------------------------------------------------
+C
+C
+C     THIS SUBROUTINE COMPUTES THE SINGULAR VALUE DECOMPOSITION
+C     OF A REAL M*N MATRIX A, I.E. IT COMPUTES MATRICES U, S, AND V
+C     SUCH THAT
+C                 A = U * S * VT ,
+C     WHERE
+C            U IS AN M*N MATRIX AND UT*U = I, (UT=TRANSPOSE OF U),
+C
+C            V IS AN N*N MATRIX AND VT*V = I, (VT=TRANSPOSE OF V),
+C
+C       AND  S IS AN N*N DIAGONAL MATRIX.
+C
+C     DESCRIPTION OF PARAMETERS=
+C
+C     A = REAL ARRAY. A CONTAINS THE MATRIX TO BE DECOMPOSED.
+C         THE ORIGINAL DATA ARE LOST. IF WITHV=.TRUE., THEN
+C         THE MATRIX U IS COMPUTED AND STORED IN THE ARRAY A.
+C
+C     MMAX = INTEGER VARIABLE. THE NUMBER OF ROWS IN THE ARRAY A.
+C
+C     NMAX = INTEGER VARIABLE. THE NUMBER OF ROWS IN THE ARRAY V.
+C
+C     M,N  = INTEGER VARIABLES. THE NUMBER OF ROWS AND COLUMNS
+C            IN THE MATRIX STORED IN A. (NG=MG=100. IF IT IS
+C            NECESSARY TO SOLVE A LARGER PROBLEM, THEN THE
+C            AMOUNT OF STORAGE ALLOCATED TO THE ARRAY T MUST
+C            BE INCREASED ACCORDINGLY.) IF MLT N, THEN EITHER
+C            TRANSPOSE THE MATRIX A OR ADD ROWS OF ZEROS TO
+C            INCREASE M TO N.
+C
+C     P = INTEGER VARIABLE. IF P'0, THEN COLUMNS N+1, . . . ,
+C         N+P OF A ARE ASSUMED TO CONTAIN THE COLUMNS OF AN M*P
+C         MATRIX B. THIS MATRIX IS MULTIPLIED BY UT, AND UPON
+C         EXIT, A CONTAINS IN THESE SAME COLUMNS THE N*P MATRIX
+C         UT*B. (P'=0)
+C
+C     WITHU, WITHV = LOGICAL VARIABLES. IF WITHU=.TRUE., THEN
+C         THE MATRIX U IS COMPUTED AND STORED IN THE ARRAY A.
+C         IF WITHV=.TRUE., THEN THE MATRIX V IS COMPUTED AND STORED IN THE ARRAY V.
+C
+C     S = REAL ARRAY. V CONTAINS THE MATRIX V. IF WITHU
+C         AND WITHV ARE NOT BOTH =.TRUE., THEN THE ACUTAL
+C         PARAMETER CORRESPONDING TO A AND V MAY BE THE SAME.
+C
+C     THIS SUBROUTINE IS A REAL VERSION OF A FORTRAN SUBROUTINE
+C     BY BUSINGER AND GOLUB, ALGORITHM 358= SINGULAR VALUE
+C     DECOMPOSITION OF A COMPLEX MATRIX, COMM. ACM, V. 12,
+C     NO. 10, PP. 564-565 (OCT. 1969).
+C     WITH REVISIONS BY RC SINGLETON, MAY 1972.
+C     --------------------------------------------------------------------------------
+C
+      DIMENSION T(200)
+C
+      DATA TOL /5.0E-37/
+      DATA ETA /5.0E-9/
+C
+C
+C
+C     ETA (16**-6) AND TOL (16**-59) ARE MACHINE DEPENDENT CONSTANTS
+C     FOR IBM 360/370 COMPUTERS (SHORT FORM ARITHMETIC).
+C     ETA IS THE MACHINE EPSILON (RELATIVE ACCURACY)\
+C     TOL IS THE SMALLEST REPRESENTABLE REAL DIVIDED BY ETA.
+C
+      NP = N + P
+      N1 = N + 1
+C
+C     HOUSEHOLDER REDUCTION TO BIDIAGONAL FORM
+      G = 0.0
+      EPS = 0.0
+      L = 1
+   10 T(L) = G
+      K = L
+      L = L + 1
+C
+C     ELIMINATION OF A(I,K), I=K+1, ..., M
+      S(K) = 0.0
+      IDDDX(K)=K
+      Z = 0.0
+      DO 20 I = K,M
+   20    Z = Z + A(I,K)**2
+      IF (Z.LT.TOL) GOTO 50
+      G = SQRT(Z)
+      F = A(K,K)
+      IF (F.GE.0.0) G = - G
+      S(K) = G
+      H = G * (F - G)
+      A(K,K) = F - G
+      IF (K.EQ.NP) GOTO 50
+      DO 40 J = L,NP
+         F = 0
+         DO 30 I = K,M
+   30       F = F + A(I,K) * A(I,J)
+         F = F/H
+         DO 40 I = K,M
+   40       A(I,J) = A(I,J) + F*A(I,K)
+C
+C     ELIMINATION OF A(K,J), J=K+2, ..., N
+   50 EPS = AMAX1(EPS,ABS(S(K)) + ABS(T(K)))
+      IF (K.EQ.N) GOTO 100
+      G = 0.0
+      Z = 0.0
+      DO 60 J = L,N
+   60    Z = Z + A(K,J)**2
+      IF(Z.LT.TOL) GOTO 10
+      G = SQRT(Z)
+      F = A(K,L)
+      IF (F.GE.0.0) G= -G
+      H = G * (F - G)
+      A(K,L) = F - G
+      DO 70 J = L,N
+   70    T(J) = A(K,J)/H
+      DO 90 I = L,M
+         F = 0
+         DO 80 J = L,N
+   80       F = F + A(K,J) * A(I,J)
+         DO 90 J = L,N
+   90       A(I,J) = A(I,J) + F*T(J)
+C
+      GOTO 10
+C
+C     TOLERANCE FOR NEGLIGIBLE ELEMENTS
+  100 EPS = EPS*ETA
+C
+C     ACCUMULATION OF TRANSFORMATIONS
+      IF (.NOT.WITHV) GOTO 160
+      K = N
+      GOTO 140
+  110    IF (T(L).EQ.0.0) GOTO 140
+         H = A(K,L)*T(L)
+         DO 130 J = L,N
+         Q = 0
+         DO 120 I = L,N
+  120    Q = Q + A(K,I)*V(I,J)
+         Q = Q/H
+         DO 130 I = L,N
+  130    V(I,J) = V(I,J) + Q*A(K,I)
+  140    DO 150 J = 1,N
+  150    V(K,J) = 0
+         V(K,K) = 1.0
+         L = K 
+         K = K - 1
+         IF (K.NE.0) GOTO 110
+C
+  160     K = N
+         IF (.NOT.WITHU) GOTO 230
+         G = S(N)
+         IF (G.NE.0.0) G = 1.0/G
+         GO TO 210
+  170    DO 180 J = L,N
+  180    A(K,J) = 0
+         G = S(K)
+         IF (G.EQ.0.0) GOTO 210
+         H = A(K,K) * G
+         DO 200 J = L,N
+         Q = 0
+         DO 190 I = L,M
+  190    Q = Q + A(I,K) * A(I,J)
+         Q = Q/H
+         DO 200 I = K,M
+  200    A(I,J) = A(I,J) + Q*A(I,K)
+         G = 1.0/G
+  210    DO 220 J = K,M
+  220    A(J,K) = A(J,K)*G
+         A(K,K) = A(K,K) + 1.0
+         L = K
+         K = K - 1
+         IF (K.NE.0) GOTO 170
+C
+C     QR DIAGONALIZATION
+C
+         K = N
+  230    L = K
+  240    IF (ABS(T(L)).LE.EPS) GOTO 290
+         L = L - 1
+         IF (ABS(S(L)).GT.EPS) GOTO 240
+C
+C     CANCELLATION
+         CS = 0.0
+         SN = 1.0
+         L1 = L
+         L = L + 1
+         DO 280 I = L,K
+         F = SN*T(I)
+         T(I) = CS*T(I)
+         IF (ABS(F).LE.EPS) GOTO 290
+         H = S(I)
+         W = SQRT(F*F + H*H)
+         S(I) = W
+         CS = H/W
+         SN = -F/W
+         IF (WITHU) CALL ROTATE(A(1,L1), A(1,I), CS, SN, M)
+         IF (NP.EQ.N) GOTO 280
+         DO 270 J = N1,NP
+         Q = A(L1,J)
+         R = A(I,J)
+         A(L1,J) = Q*CS + R*SN
+  270    A(I,J) = R*CS - Q*SN
+  280    CONTINUE
+C
+C     TEST FOR CONVERGENCE
+  290    W = S(K)
+         IF (L.EQ.K) GOTO 360
+C
+C     ORIGIN SHIFT
+         X = S(L)
+         Y = S(K-1)
+         G = T(K-1)
+         H = T(K)
+         F = ((Y - W)*(Y + W) + (G - H)*(G + H))/(2.0*H*Y)
+         G = SQRT(F*F + 1.0)
+         IF (F.LT.0.0) G = - G
+         F = ((X - W)*(X + W) + (Y/(F + G) - H)*H)/X
+C
+C     QR STEP
+         CS = 1.0
+         SN = 1.0
+         L1 = L + 1
+         DO 350 I = L1,K
+         G = T(I)
+         Y = S(I)
+         H = SN*G
+         G = CS*G
+         W = SQRT(H*H + F*F)
+         T(I - 1) = W
+         CS = F/W
+         SN = H/W
+         F = X*CS + G*SN
+         G = G*CS - X*SN
+         H = Y*SN
+         Y = Y*CS
+         IF (WITHV) CALL ROTATE(V(1,I-1), V(1,I), CS, SN, N)
+         W = SQRT(H*H + F*F)
+         S(I-1) = W
+         CS = F/W
+         SN = H/W
+         F = CS*G + SN*Y
+         X = CS*Y - SN*G
+         IF (WITHU) CALL ROTATE(A(1,I-1), A(1,I), CS, SN, M)
+         IF (N.EQ.NP) GOTO 350
+         DO 340 J = N1,NP
+         Q = A(I-1,J)
+         R = A(I,J)
+         A(I-1,J) = Q*CS + R*SN
+  340    A(I,J) = R*CS - Q*SN
+  350    CONTINUE
+C
+         T(L) = 0.0
+         T(K) = F
+         S(K) = X
+         GOTO 230
+C
+C     CONVERGENCE
+  360    IF (W.GE.0.0) GOTO 380
+         S(K) = -W
+         IF (.NOT.WITHV) GOTO 380
+         DO 370 J = 1,N
+  370    V(J,K) = -V(J,K)
+  380    K = K - 1
+         IF (K.NE.0) GOTO 230
+C
+C     SORT SINGULAR VALUES
+      DO 450 K = 1,N
+      G = -1.0
+      DO 390 I = K,N
+      IF (S(I).LT.G) GOTO 390
+      G = S(I)
+      IDDDY=IDDDX(I)
+      J = I
+  390 CONTINUE
+      IF (J.EQ.K) GOTO 450
+      S(J) = S(K)
+      IDDDX(J) = IDDDX(K)
+      S(K) = G
+      IDDDX(K) = IDDDY
+      IF (.NOT.WITHV) GOTO 410
+      DO 400 I = 1,N
+      Q = V(I,J)
+      V(I,J) = V(I,K)
+  400 V(I,K) = Q
+  410 IF (.NOT.WITHU) GOTO 430
+      DO 420 I = 1,M
+      Q = A(I,J)
+      A(I,J) = A(I,K)
+  420 A(I,K) = Q
+  430 IF (N.EQ.NP) GOTO 450
+      DO 440 I = N1,NP
+      Q = A(J,I)
+      A(J,I) = A(K,I)
+  440 A(K,I) = Q
+  450 CONTINUE
+C
+      WRITE(6,1000)
+ 1000 FORMAT(1H,' THE PARAMETER VECTORS ARE ORDERED AS',/)
+      PRINT 1001, (IDDDX(K),K=1,N)
+ 1001 FORMAT (1H,10I5)
+      RETURN
+      END
+C
+      SUBROUTINE  ROTATE  (X,Y,CS,SN,N)
+      INTEGER N
+      REAL    X(N),Y(N),CS,SN
+C
+C
+      REAL    XX
+      INTEGER J
+C
+C
+      DO 10 J = 1, N
+         XX = X(J)
+         X(J) = XX*CS + Y(J)*SN
+10       Y(J) = Y(J)*CS - XX*SN
+      RETURN
+      END
